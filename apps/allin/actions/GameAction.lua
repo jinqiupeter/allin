@@ -111,12 +111,6 @@ _handleGAMELIST = function (parts, args)
     return result
 end
 
--- broadcast a message to all online members of a club
-_broadcast_newgame = function(club_id, message)
-    local online = Online:new(self:getInstance())
-    online:sendClubMessage(club_id, message)
-end
-
 _handleGAMEINFO = function (parts, args)
     local msgid = args.msgid
     if tonumber(parts[1]) ~= nil then
@@ -127,7 +121,6 @@ _handleGAMEINFO = function (parts, args)
     local result = {__id = msgid, state_type = "action_state", data = {
         action = args.action, state = Constants.OK}
     }
-
 
     -- server response looks like: GAMEINFO 1 1:3:1:9:5:1:30:1500 20:20:300 "peter's game 1"
     local user_state = 0 -- user_state: 0x01(is_player) | 0x02(is_spectator) | 0x04(is_owner)
@@ -176,6 +169,16 @@ _handleGAMEINFO = function (parts, args)
     result.data.blinds_time         = info[3]
 
     result.data.name                = table.concat(table.subrange(parts, 5, #parts), " ")
+
+    -- send new game to all online users of the club
+    cc.printdebug("sending new game info to all users in club %s", args.club_id)
+    local message = result.data
+    message.action = nil
+    message.state = nil
+    message.created_by = args.user_id
+    local online = args.instance:getOnline()
+    online:sendClubMessage(args.club_id or 0, message)
+
     return result
 end
 
@@ -342,6 +345,7 @@ function GameAction:creategameAction(args)
 
     self._currentAction = args.action
     self._msgid = msgid
+    self._club_id = club_id
     local result = {state_type = "action_state", data = {
         action = args.action}
     }

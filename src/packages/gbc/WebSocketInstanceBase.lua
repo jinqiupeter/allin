@@ -92,7 +92,6 @@ function WebSocketInstanceBase:runEventLoop()
         cc.throw("invalid session id")
     end
 
-    cc.printdebug("WebSocketInstanceBase connectToken : \"%s\"", tostring(token))
     self._connectToken = token
 
     -- generate connect id and channel
@@ -362,7 +361,6 @@ _authConnect = function()
     req_read_body()
     local headers = ngx.req.get_headers()
     local protocols = headers["sec-websocket-protocol"]
-    cc.printdebug("WebSocketInstanceBase _authConnect protocol: \"%s\"", tostring(protocols))
     if type(protocols) ~= "table" then
         protocols = {protocols}
     end

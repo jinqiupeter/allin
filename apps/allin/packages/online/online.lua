@@ -53,17 +53,17 @@ function Online:getClubMembers(club_id)
     return self._redis:smembers(_ONLINE_SET_CLUB .. club_id)
 end
 
-function Online:addToClub(club_id)
+function Online:addToClub(user_id, club_id)
     local redis = self._redis
     redis:initPipeline()
-    redis:sadd(_ONLINE_SET_CLUB .. club_id, username)
+    redis:sadd(_ONLINE_SET_CLUB .. club_id, user_id)
     return redis:commitPipeline()
 end
 
-function Online:removeFromClub(club_id)
+function Online:removeFromClub(user_id, club_id)
     local redis = self._redis
     redis:initPipeline()
-    redis:srem(_ONLINE_SET_CLUB .. club_id, username)
+    redis:srem(_ONLINE_SET_CLUB .. club_id, user_id)
     return redis:commitPipeline()
 end
 
@@ -78,7 +78,9 @@ function Online:add(username, connectId)
 
     -- send event to all clients
     redis:publish(_ONLINE_CHANNEL, json.encode({name = _EVENT.ADD_USER, username = username}))
-    return redis:commitPipeline()
+    redis:commitPipeline()
+    local inspect = require("inspect")
+    return
 end
 
 function Online:remove(username)
@@ -114,6 +116,8 @@ function Online:sendMessage(recipient, event)
     local redis = self._redis
     -- query connect id by recipient
     local connectId, err = redis:hget(_USERNAME_TO_CONNECT, recipient)
+
+    local inspect = require("inspect")
     if not connectId then
         return nil, err
     end
@@ -126,10 +130,12 @@ function Online:sendMessage(recipient, event)
     return self._broadcast:sendMessage(connectId, event)
 end
 
-function Online:sendClubMessage(message)
-    local members = self:getClubMembers()
+function Online:sendClubMessage(club_id, message)
+    local members = self:getClubMembers(club_id)
+    local inspect = require("inspect")
     for key, value in pairs(members) do
-        self:sendMessage(key, message)
+        cc.printdebug("sending message to user %s", value)
+        self:sendMessage(value, json.encode(message))
     end
 end
 

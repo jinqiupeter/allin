@@ -24,7 +24,7 @@ function WebSocketInstance:onConnected()
     local session = Session:new(redis)
 
     session:start()
-    local username = self:getPhone()
+    local username = self:getCid()
     session:set("username", username)
     session:save()
 
@@ -33,9 +33,12 @@ function WebSocketInstance:onConnected()
     online:add(username, self:getConnectId())
 
     -- add user to each of his/her club's online user list
-    local clubs = self:getClubIds()
-    for key, value in pairs(members) do
-        online:addToClub(key)
+    local clubIds = self:getClubIds()
+    local inspect = require("inspect")
+    if type(clubIds) == "table" then
+        for key, value in pairs(clubIds) do
+            online:addToClub(self:getCid(), value)
+        end
     end
 
     self._session = session
@@ -46,12 +49,15 @@ function WebSocketInstance:onDisconnected(event)
     if event.reason ~= gbc.Constants.CLOSE_CONNECT then
         -- connection interrupted unexpectedly, remove user from online list
         cc.printwarn("[websocket:%s] connection interrupted unexpectedly", self:getConnectId())
-        local username = self._session:get("username")
+        local username = self.getCid()
 
-        -- add user to each of his/her club's online user list
+        -- remove user to each of his/her club's online user list
         local clubs = self:getClubIds()
-        for key, value in pairs(members) do
-            online:removeFromClub(key)
+        if type(clubs) == "table" then
+            for key, value in pairs(clubs) do
+                local online = self:getOnline()
+                online:removeFromClub(self:getCid(), value)
+            end
         end
         self._online:remove(username)
     end
@@ -103,9 +109,14 @@ function WebSocketInstance:getInstallation()
     return self._installation
 end
 
+function WebSocketInstance:getOnline()
+    return self._online
+end
+
 function WebSocketInstance:getClubIds()
     local mysql = self:getMysql()
     local sql = "SELECT club_id from user_club WHERE deleted = 0 AND user_id = ".. self:getCid() .. ";"
+    cc.printdebug("executing sql: %s", sql)
     local dbres, err, errno, sqlstate = mysql:query(sql)
     if not dbres then
         return nil
@@ -116,7 +127,7 @@ function WebSocketInstance:getClubIds()
     
     local clubs = {}
     while next(dbres) ~= nil do
-        table.merge(clubs, dbres[1])
+        table.insert(clubs, dbres[1].club_id)
         table.remove(dbres, 1)
     end
 
