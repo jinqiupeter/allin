@@ -1,6 +1,7 @@
 local string_split       = string.split
 local gbc = cc.import("#gbc")
 local Leancloud = cc.import("#leancloud")
+local Online = cc.import("#online")
 local GameAction = cc.class("GameAction", gbc.ActionBase)
 local WebSocketInstance = cc.import(".WebSocketInstance", "..")
 local Constants = cc.import(".Constants", "..")
@@ -108,6 +109,12 @@ _handleGAMELIST = function (parts, args)
     result.data.msg = #dbres .. " games(s) found"
     result.data.games = dbres
     return result
+end
+
+-- broadcast a message to all online members of a club
+_broadcast_newgame = function(club_id, message)
+    local online = Online:new(self:getInstance())
+    online:sendClubMessage(club_id, message)
 end
 
 _handleGAMEINFO = function (parts, args)

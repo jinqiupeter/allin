@@ -40,13 +40,7 @@ function WebSocketInstance:onConnected()
     -- load session
     local sid = self:getConnectToken() -- token is session id
     local session = Session:new(redis)
-    for k, v in pairs( session ) do
-        cc.printdebug("authaction: session k=\"%s\", v=:\"%s\"", k, v)
-    end 
     session:start(sid)
-    for k, v in pairs( session ) do
-        cc.printdebug("authaction: session k=\"%s\", v=:\"%s\"", k, v)
-    end 
 
     -- add user to online users list
     local online = Online:new(self)

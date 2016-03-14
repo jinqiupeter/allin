@@ -32,6 +32,12 @@ function WebSocketInstance:onConnected()
     local online = Online:new(self)
     online:add(username, self:getConnectId())
 
+    -- add user to each of his/her club's online user list
+    local clubs = self:getClubIds()
+    for key, value in pairs(members) do
+        online:addToClub(key)
+    end
+
     self._session = session
     self._online = online
 end
@@ -41,6 +47,12 @@ function WebSocketInstance:onDisconnected(event)
         -- connection interrupted unexpectedly, remove user from online list
         cc.printwarn("[websocket:%s] connection interrupted unexpectedly", self:getConnectId())
         local username = self._session:get("username")
+
+        -- add user to each of his/her club's online user list
+        local clubs = self:getClubIds()
+        for key, value in pairs(members) do
+            online:removeFromClub(key)
+        end
         self._online:remove(username)
     end
 

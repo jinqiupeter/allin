@@ -14,8 +14,8 @@ var f2num = function(n, l) {
     return n;
 }
 
-var HTTP_ENTRY      = "allin_api";
-var WEBSOCKET_ENTRY = "allin_socket";
+var HTTP_ENTRY      = "welcome_api";
+var WEBSOCKET_ENTRY = "welcome_socket";
 
 var DemoApp = function (apphtml) {
     var self = this;

@@ -30,6 +30,7 @@ local gbc = cc.import("#gbc")
 local Online = cc.class("Online")
 
 local _ONLINE_SET        = "_ONLINE_USERS"
+local _ONLINE_SET_CLUB        = _ONLINE_SET .. "_"
 local _ONLINE_CHANNEL    = "_ONLINE_CHANNEL"
 local _EVENT = table.readonly({
     ADD_USER    = "ADD_USER",
@@ -48,6 +49,24 @@ function Online:getAll()
     return self._redis:smembers(_ONLINE_SET)
 end
 
+function Online:getClubMembers(club_id)
+    return self._redis:smembers(_ONLINE_SET_CLUB .. club_id)
+end
+
+function Online:addToClub(club_id)
+    local redis = self._redis
+    redis:initPipeline()
+    redis:sadd(_ONLINE_SET_CLUB .. club_id, username)
+    return redis:commitPipeline()
+end
+
+function Online:removeFromClub(club_id)
+    local redis = self._redis
+    redis:initPipeline()
+    redis:srem(_ONLINE_SET_CLUB .. club_id, username)
+    return redis:commitPipeline()
+end
+
 function Online:add(username, connectId)
     local redis = self._redis
     redis:initPipeline()
@@ -56,6 +75,7 @@ function Online:add(username, connectId)
     redis:hset(_USERNAME_TO_CONNECT, username, connectId)
     -- add username to set
     redis:sadd(_ONLINE_SET, username)
+
     -- send event to all clients
     redis:publish(_ONLINE_CHANNEL, json.encode({name = _EVENT.ADD_USER, username = username}))
     return redis:commitPipeline()
@@ -104,6 +124,13 @@ function Online:sendMessage(recipient, event)
 
     -- send message to connect id
     return self._broadcast:sendMessage(connectId, event)
+end
+
+function Online:sendClubMessage(message)
+    local members = self:getClubMembers()
+    for key, value in pairs(members) do
+        self:sendMessage(key, message)
+    end
 end
 
 function Online:sendMessageToAll(event)
