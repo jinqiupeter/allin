@@ -113,7 +113,7 @@ function ClubAction:listjoinedclubAction(args)
 
     local instance = self:getInstance()
     local mysql = instance:getMysql()
-    local sql = "SELECT a.id, a.name, a.owner_id, a.description FROM club a, user_club b "
+    local sql = "SELECT a.id, a.name, a.owner_id, a.area, a.description FROM club a, user_club b "
                 .. " WHERE b.deleted = 0 AND "
                 .. " a.id = b.club_id AND "
                 .. " b.user_id = " .. instance:getCid()
