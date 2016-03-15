@@ -79,7 +79,6 @@ function Online:add(username, connectId)
     -- send event to all clients
     redis:publish(_ONLINE_CHANNEL, json.encode({name = _EVENT.ADD_USER, username = username}))
     redis:commitPipeline()
-    local inspect = require("inspect")
     return
 end
 
@@ -117,7 +116,6 @@ function Online:sendMessage(recipient, event)
     -- query connect id by recipient
     local connectId, err = redis:hget(_USERNAME_TO_CONNECT, recipient)
 
-    local inspect = require("inspect")
     if not connectId then
         return nil, err
     end
@@ -132,7 +130,6 @@ end
 
 function Online:sendClubMessage(club_id, message)
     local members = self:getClubMembers(club_id)
-    local inspect = require("inspect")
     for key, value in pairs(members) do
         cc.printdebug("sending message to user %s", value)
         self:sendMessage(value, json.encode(message))
