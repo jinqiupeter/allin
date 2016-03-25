@@ -195,9 +195,9 @@ function ClubAction:listclubAction(args)
         action = args.action}
     }
 
-    if limit > 50 then
+    if limit > Constants.Limit.ListClubLimit then
         result.data.msg = "max number of record limit exceeded, only " .. Constants.Limit.ListClubLimit .. " allowed in one query"
-        result.data.state = PermissionDenied
+        result.data.state = Constants.Error.PermissionDenied
         return result
     end
 
@@ -288,7 +288,7 @@ function ClubAction:joinclubAction(args)
 
     -- send to club owner for approval
     local online = instance:getOnline()
-    local message = {state_type = "server_push", data = {push_type = "club_application"}}
+    local message = {state_type = "server_push", data = {push_type = "club.application"}}
     message.data.user_id = instance:getCid()
     message.data.phone = instance:getPhone()
     message.data.nickname = instance:getNickname()
@@ -309,6 +309,12 @@ function ClubAction:listapplicationAction(args)
         action = args.action}
     }
 
+    if limit > Constants.Limit.ListClubApplicationListLimit then
+        result.data.msg = "max number of record limit exceeded, only " .. Constants.Limit.ListClubApplicationListLimit .. " allowed in one query"
+        result.data.state = Constants.Error.PermissionDenied
+        return result
+    end
+
     local instance = self:getInstance()
     local mysql = instance:getMysql()
     local sql = "SELECT a.id as user_id, a.phone, a.nickname, b.id as club_id, b.name as club_name, c.notes, c.applied_at from user a, club b, club_application c "
@@ -326,8 +332,9 @@ function ClubAction:listapplicationAction(args)
         return result
     end
      
+    result.data.applications = dbres
     result.data.state = 0
-    result.data.msg = #dbres .. "applications found"
+    result.data.msg = #dbres .. " applications found"
     return result
 end
 
@@ -430,6 +437,65 @@ function ClubAction:removememberAction(args)
     result.data.club_id = club_id
     result.data.user_id = user_id
     result.data.msg = "user " .. user_id .. " removed from club " .. club
+    return result
+end
+
+function ClubAction:disbandclubAction(args)
+    local data = args.data
+    local club_id = data.club_id
+    local result = {state_type = "action_state", data = {
+        action = args.action}
+    }
+
+    if not club_id then
+        result.data.msg = "club_id not provided"
+        result.data.state = Constants.Error.ArgumentNotSet
+        return result
+    end
+        
+    local instance = self:getInstance()
+    local mysql = instance:getMysql()
+    local sql = " SELECT owner_id FROM club where deleted = 0 and id = " .. club_id
+    cc.printdebug("executing sql: %s", sql)
+    local dbres, err, errno, sqlstate = mysql:query(sql)
+    if not dbres then
+        result.data.state = Constants.Error.MysqlError
+        result.data.msg = "数据库错误: " .. err
+        return result
+    end
+    if next(dbres) == nil then
+        result.data.state = Constants.Error.NotExist
+        result.data.msg = "club not found: " .. club_id
+        return result
+    end
+    local owner_id = dbres[1].owner_id
+    if owner_id ~= instance:getCid() then
+        result.data.state = Constants.Error.PermissionDenied
+        result.data.msg = "you are not owner of club " .. club_id .. ". Only the club owner can disband the club"
+        return result
+    end
+
+    -- delete the club
+    sql = " UPDATE club set deleted = 1 where id = " .. club_id
+    cc.printdebug("executing sql: %s", sql)
+    local dbres, err, errno, sqlstate = mysql:query(sql)
+    if not dbres then
+        result.data.state = Constants.Error.MysqlError
+        result.data.msg = "数据库错误: " .. err
+        return result
+    end
+    -- remove all users
+    sql = " UPDATE user_club set deleted = 1 where club_id = " .. club_id
+    cc.printdebug("executing sql: %s", sql)
+    local dbres, err, errno, sqlstate = mysql:query(sql)
+    if not dbres then
+        result.data.state = Constants.Error.MysqlError
+        result.data.msg = "数据库错误: " .. err
+        return result
+    end
+
+    result.data.state = 0
+    result.data.msg = "club " .. club_id .. " disbanded"
     return result
 end
 

@@ -49,7 +49,7 @@ function WebSocketInstance:onDisconnected(event)
     if event.reason ~= gbc.Constants.CLOSE_CONNECT then
         -- connection interrupted unexpectedly, remove user from online list
         cc.printwarn("[websocket:%s] connection interrupted unexpectedly", self:getConnectId())
-        local username = self.getCid()
+        local username = self:getCid()
 
         -- remove user to each of his/her club's online user list
         local clubs = self:getClubIds()
@@ -73,6 +73,7 @@ function WebSocketInstance:validateSession(session)
     local mysql = self:getMysql()
 
     local sql = "select * from user where session = \'".. session .. "\';"
+    cc.printdebug("executing sql: %s", sql)
     local dbres, err, errno, sqlstate = mysql:query(sql)
     if not dbres then
         return nil

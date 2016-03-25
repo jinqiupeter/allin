@@ -1,7 +1,5 @@
 local string_split       = string.split
 local gbc = cc.import("#gbc")
-local Leancloud = cc.import("#leancloud")
-local Online = cc.import("#online")
 local GameAction = cc.class("GameAction", gbc.ActionBase)
 local WebSocketInstance = cc.import(".WebSocketInstance", "..")
 local Constants = cc.import(".Constants", "..")
@@ -10,38 +8,19 @@ GameAction.ACCEPTED_REQUEST_TYPE = "websocket"
 -- private
 local snap = cc.import(".snap")
 
-local _addJob = function (jobs, action, delay, data)
-    local job = {
-        action = action,
-        delay  = delay,
-        data   = data
-    }
-    local ok, err = jobs:add(job)
-    if not ok then
-        cc.printwarn("failed to add beanstalkd job: %s", err)
-    end
-    local inspect = require("inspect")
-    cc.printdebug("job added to beanstalkd: %s", inspect(ok))
-end
-
 local _updateUserGameHistory = function (mysql, args)
     local user_id = args.user_id
     local game_id = args.game_id
-    local user_state = args.user_state  -- user_state: 0x01(is_player) | 0x02(is_spectator) | 0x04(is_owner)
 
-    local sql = "SELECT id, user_state FROM user_game_history WHERE user_id = " .. user_id .. " AND game_id = " .. game_id
+    local sql = "INSERT INTO user_game_history (user_id, game_id, is_player, is_owner, is_spectator) "
+                .. " VALUES (" .. user_id .. ", " .. game_id .. ", " .. args.is_player .. ", " .. args.is_owner .. ", " .. args.is_spectator .. ")"
+              .. " ON DUPLICATE KEY UPDATE is_player = " .. args.is_player 
+                                           .. ",  is_owner = " .. args.is_owner
+                                           .. ",  is_spectator = " .. args.is_spectator
     cc.printdebug("executing sql: %s", sql)
     local dbres, err, errno, sqlstate = mysql:query(sql)
     if not dbres then
         cc.throw("db err: %s", err)
-    end
-
-    if #dbres == 0 or #dbres == 1 and dbres[1].user_state ~= user_state then 
-        local sql = "INSERT INTO user_game_history (user_id, game_id, user_state) VALUES (" .. user_id .. ", " .. game_id .. ", " .. user_state .. ")"
-        local dbres, err, errno, sqlstate = mysql:query(sql)
-        if not dbres then
-            cc.throw("db err: %s", err)
-        end
     end
 end
 
@@ -72,6 +51,7 @@ _handlePSERVER = function (parts, args)
     return result
 end
 
+
 _handleGAMELIST = function (parts, args)
     local msgid = args.msgid
     local club_id = args.club_id
@@ -90,15 +70,20 @@ _handleGAMELIST = function (parts, args)
 
     -- tcp format: GAMELIST 1 2 3
     local game_ids = table.subrange(parts, 2, #parts)
-    local id_clause = " 1=1 "
-
     if #game_ids == 0 then
         game_ids[1] = -1
     end
-    id_clause = id_clause .. " and g.id in (" .. table.concat(game_ids, ", ") .. ") "
-    local sql = "SELECT g.id, club_id, g.name, g.owner_id, c.name as club_name, blinds_start, blinds_factor, game_mode FROM game g, club c WHERE "
-                .. " g.deleted != 1 and g.club_id = c.id and " 
-                .. id_clause .. " AND club_id = " .. club_id -- only return games belong to club_id
+
+    local game_id_condition = "(" .. table.concat(game_ids, ", ") .. ") "
+    local sql = "SELECT g.id, club_id, g.name, g.owner_id, g.max_players, c.name as club_name, blinds_start, blinds_factor, game_mode, u.nickname , COUNT(ug.user_id) AS player_count "
+                .. " FROM game g, club c, user u, user_game_history ug"
+                .. " WHERE g.deleted != 1 "
+                .. " AND g.id IN " .. game_id_condition 
+                .. " AND g.id = ug.game_id "
+                .. " AND g.club_id = c.id " 
+                .. " AND g.owner_id = u.id"
+                .. " AND g.club_id = " .. club_id -- only return games belong to club_id
+                .. " GROUP BY g.id"
                 .. " LIMIT " .. offset .. ", " .. limit
     cc.printdebug("executing sql: %s", sql)
     local dbres, err, errno, sqlstate = mysql:query(sql)
@@ -123,7 +108,6 @@ _handleGAMEINFO = function (parts, args)
     }
 
     -- server response looks like: GAMEINFO 1 1:3:1:9:5:1:30:1500 20:20:300 "peter's game 1"
-    local user_state = 0 -- user_state: 0x01(is_player) | 0x02(is_spectator) | 0x04(is_owner)
     result.data.game_id = parts[2]
     local info = string_split(parts[3], ":")
     result.data.game_type = info[1] -- 1: GameTypeHoldem 
@@ -133,7 +117,6 @@ _handleGAMEINFO = function (parts, args)
     result.data.is_player = 0
     if bit.band(0x01 ,tonumber(info[4])) > 0 then 
         result.data.is_player = 1
-        user_state = bit.bor(0x01, user_state)
     end
     result.data.password_protected = 0
     if bit.band(0x02 ,tonumber(info[4])) > 0 then 
@@ -146,12 +129,10 @@ _handleGAMEINFO = function (parts, args)
     result.data.is_owner = 0
     if bit.band(0x08 ,tonumber(info[4])) > 0 then 
         result.data.is_owner = 1
-        user_state = bit.bor(0x04, user_state)
     end
     result.data.is_spectator = 0
     if bit.band(0x10 ,tonumber(info[4])) > 0 then 
         result.data.is_spectator = 1
-        user_state = bit.bor(0x02, user_state)
     end
 
     result.data.max_players         = info[5]
@@ -160,7 +141,10 @@ _handleGAMEINFO = function (parts, args)
     result.data.stake               = info[7]
     _updateUserGameHistory(args.mysql, {game_id = result.data.game_id, 
                                         user_id = args.user_id, 
-                                        user_state = user_state}
+                                        is_player = result.data.is_player,
+                                        is_owner = result.data.is_owner, 
+                                        is_spectator = result.data.is_spectator
+                                        }
                           )
 
     info = string_split(parts[4], ":")
@@ -170,19 +154,68 @@ _handleGAMEINFO = function (parts, args)
 
     result.data.name                = table.concat(table.subrange(parts, 5, #parts), " ")
 
+    --[[
     -- send new game to all online users of the club
     cc.printdebug("sending new game info to all users in club %s", args.club_id)
-    local message = result.data
-    message.action = nil
-    message.state = nil
-    message.created_by = args.user_id
+    local message = {state_type = "server_push", data = {push_type = "game.newgame"}}
+    message.data.name = result.data.name
+    message.data.stake = result.data.stake
+    message.data.blinds_time = result.data.blinds_time
+    message.data.blinds_start = result.data.blinds_start
+    message.data.blinds_factor = result.data.blinds_factor
+    message.data.timeout = result.data.timeout
+    message.data.max_players = result.data.max_players
+    message.data.player_count = result.data.player_count
+    message.data.password_protected = result.data.password_protected
+    message.data.game_type = result.data.game_type
+    message.data.game_id = result.data.game_id
+    message.data.game_type = result.data.game_type
+    message.data.auto_restart = result.data.auto_restart
+    message.data.game_mode = result.data.game_mode
+    message.data.created_by = args.user_id
     local online = args.instance:getOnline()
     online:sendClubMessage(args.club_id or 0, message)
+    --]]
 
     return result
 end
 
 _handlePLAYERLIST = function (parts, args)
+    local msgid = args.msgid
+    local mysql = args.mysql
+    if tonumber(parts[1]) ~= nil then
+        msgid = parts[1]
+        table.remove(parts, 1)
+    end
+
+    local result = {state_type = "server_push", data = {push_type = "game.playerlist"}}
+
+    --server response looks like: PLAYERLIST 1 0   
+    result.data.game_id = parts[2]
+    local player_ids = table.subrange(parts, 3, #parts) 
+    local player_id_condition = "(" .. table.concat(player_ids, ", ") .. ") "
+    local sql = "SELECT id, nickname, phone FROM user where id in " .. player_id_condition
+    cc.printdebug("executing sql: %s", sql)
+    local dbres, err, errno, sqlstate = mysql:query(sql)
+    if not dbres then
+        cc.printdebug("db err: %s", err)
+        result.data.state = Constants.Error.MysqlError
+        result.data.msg = "数据库错误: " .. err
+        return result
+    end
+
+    result.data.msg = #dbres .. " players(s) found"
+    result.data.players = dbres
+    local inspect = require("inspect")
+    cc.printdebug("return result: %s", inspect(result))
+    return result
+end
+
+_handleSNAP = function (parts, args)
+    return snap:handleSNAP(parts, args)
+end
+
+_handleOK = function (parts, args)
     local msgid = args.msgid
     if tonumber(parts[1]) ~= nil then
         msgid = parts[1]
@@ -192,17 +225,11 @@ _handlePLAYERLIST = function (parts, args)
     local result = {__id = msgid, state_type = "action_state", data = {
         action = args.action, state = Constants.OK}
     }
+    if parts[3] then
+        result.data.game_id = parts[3]
+    end
 
-    --server response looks like: PLAYERLIST 1 0   
-    result.data.game_id = parts[2]
-    local player_ids = table.subrange(parts, 3, #parts) 
-
-    result.data.player_ids = player_ids
     return result
-end
-
-_handleSNAP = function (parts, args)
-    return snap:handleSNAP(parts, args)
 end
 
 _handleERR = function (parts, args)
@@ -226,6 +253,7 @@ local _serverCmdHandler = {
     GAMELIST        = _handleGAMELIST,
     PLAYERLIST      = _handlePLAYERLIST,
     CLIENTINFO      = _handleCLIENTINFO,
+    OK              = _handleOK,
     ERR             = _handleERR
 }
 GameAction.ServerCmdHandler = _serverCmdHandler
@@ -235,6 +263,7 @@ function GameAction:ctor(config)
     GameAction.super.ctor(self, config)
     local allinMsgChannel = WebSocketInstance.EVENT.ALLIN_MESSAGE .. "_" .. self:getInstance():getConnectId()
     self:getInstance():addEventListener(allinMsgChannel, cc.handler(self, self.onAllinMessage))
+    self:getInstance():addEventListener(WebSocketInstance.EVENT.DISCONNECT, cc.handler(self, self.onDisconnect))
 end
 
 function GameAction:versioncheckAction(args)
@@ -326,6 +355,113 @@ function GameAction:creategameAction(args)
         password = ""
         cc.printinfo("password not set")
     end
+    local name = data.name
+    if not name then
+        local nickname = self:getInstance():getNickname()
+        name = nickname .. "'s game"
+        cc.printinfo("name set to default: %s", name)
+    end
+    local expire_in = data.expire_in
+    if not expire_in then
+        expire_in = 30 * 60
+        cc.printinfo("expire_in set to default: %d", expire_in)
+    end
+    local club_id = data.club_id
+    if not club_id then
+        club_id = 0
+        cc.printinfo("club_id set to default: %d", club_id)
+    end
+
+    self._currentAction = args.action
+    self._msgid = msgid
+    local result = {state_type = "action_state", data = {
+        action = args.action}
+    }
+
+
+    local instance = self:getInstance()
+    local mysql = instance:getMysql()
+    local game_id, err = instance:getNextId("game")
+    if not game_id then
+        result.data.state = Constants.Error.MysqlError
+        result.data.msg = "failed to get next_id for table game, err: %s" .. err
+        return result
+    end
+
+    --tcp msg format: CREATE game_id: 23 players:5 stake:1500 timeout:30 blinds_start:20 blinds_factor:20 blinds_time:300 password: "name:peter's game 1"
+    local message = msgid .. " CREATE game_id:"         .. game_id
+                                .. " players:"          .. max_players 
+                                .. " stake:"            .. stake 
+                                .. " timeout:"          .. timeout
+                                .. " blinds_start:"     .. blinds_start
+                                .. " blinds_factor:"    .. blinds_factor
+                                .. " blinds_time:"      .. blinds_time
+                                .. " password:"         .. password
+                                .. " \"name:"           .. name .. "\""
+                                .. "\n" -- '\n' is mandatory
+    cc.printdebug("sending message to allin server: %s", message)
+    local allin = instance:getAllin()
+
+    local bytes, err = allin:sendMessage(message)
+    if not bytes then
+        result.data.state = Constants.Error.AllinError
+        result.data.msg = err
+        cc.printwarn("failed to send message: %s", err)
+        return result
+    end 
+
+    local sql = "INSERT INTO game (max_players, stake, timeout, blinds_start, blinds_factor, blinds_time, password, name, state, owner_id, expire_in, club_id, game_mode, start_at, allow_rebuy, allow_rebuy_after, deny_register_after) "
+                      .. " VALUES (" .. max_players .. ", "
+                               ..  stake .. ", "
+                               ..  timeout .. ", "
+                               ..  blinds_start .. ", "
+                               ..  blinds_factor .. ", "
+                               ..  blinds_time .. ", "
+                               .. instance:sqlQuote(password) .. ", "
+                               .. instance:sqlQuote(name) .. ", "
+                               ..  1 .. ", "
+                               .. "(SELECT id FROM user WHERE session = " .. instance:sqlQuote(self:getInstance():getAllinSession()) .. "), "
+                               .. expire_in .. ", "
+                               .. club_id .. ", "
+                               .. game_mode .. ", "
+                               .. start_at .. ", "
+                               .. allow_rebuy .. ", "
+                               .. allow_rebuy_after .. ", "
+                               .. deny_register_after .. ");"
+    cc.printdebug("executing sql: %s", sql)
+    local dbres, err, errno, sqlstate = mysql:query(sql)
+    if not dbres then
+        result.data.state = Constants.Error.MysqlError
+        result.data.msg = "数据库错误: " .. err
+        return result
+    end
+
+    return 
+end
+
+function GameAction:listgameAction(args)
+    local data = args.data
+    local club_id = data.club_id
+    local msgid = args.__id
+    local result = {state_type = "action_state", data = {
+        action = args.action}
+    }
+
+    if not club_id then
+        result.data.msg = "club_id not provided"
+        result.data.state = Constants.Error.ArgumentNotSet
+        cc.printinfo("argument not provided: \"club_id\"")
+        return result
+    end
+
+    self._currentAction = args.action
+    self._msgid = msgid
+    self._club_id = club_id
+
+    --send command to allin server, tcp format: REGISTER 1
+    local message = msgid .. " REQUEST gamelist\n"
+    cc.printdebug("sending message to allin server: %s", message)
+    local instance = self:getInstance()
     local name = data.name
     if not name then
         local nickname = self:getInstance():getNickname()
@@ -529,7 +665,7 @@ function GameAction:joingameAction(args)
     end
     local game = dbres[1]
     local user_clubs = instance:getClubIds()
-    if not user_clubs[game.club_id] then
+    if not table.contains(user_clubs, game.club_id) then
         result.data.state = Constants.Error.PermissionDenied
         result.data.msg = "you are not member of club with club_id: " .. game.club_id
         return result
@@ -623,6 +759,25 @@ function GameAction:requestgameinfoAction(args)
     end 
 
     return 
+end
+
+function GameAction:onAllinMessage(event)
+    -- This function is called in a seperate thread from /opt/gbc-core/src/packages/allin/NginxAllinLoop.lua
+    local message = event.message
+    local mysql   = event.mysql
+    if not message then
+        cc.printdebug("message not found in event")
+    end
+    if not mysql then
+        cc.printdebug("mysql not found in event")
+    end
+
+    local websocket = event.websocket
+    if not websocket then
+        cc.printdebug("websocket not found in event")
+    end
+
+    websocket:sendMessage(self:processMessage(message, mysql))
 end
 
 function GameAction:requestplayerlistAction(args)
@@ -942,30 +1097,11 @@ function GameAction:useractionAction(args)
     return 
 end
 
-function GameAction:onAllinMessage(event)
-    -- This function is called in a seperate thread from /opt/gbc-core/src/packages/allin/NginxAllinLoop.lua
-    local message = event.message
-    local mysql   = event.mysql
-    if not message then
-        cc.printdebug("message not found in event")
-    end
-    if not mysql then
-        cc.printdebug("mysql not found in event")
-    end
-
-    local websocket = event.websocket
-    if not websocket then
-        cc.printdebug("websocket not found in event")
-    end
-
-    websocket:sendMessage(self:processMessage(message, mysql))
-end
-
 function GameAction:processMessage(message, mysql)
     cc.printdebug("GameAction:processMessage processing message: %s", message)
     local parts = string_split(message, " ")
-
     local cmd = parts[1]
+
     if tonumber(cmd) ~= nil then
        cmd = parts[2] 
     end
@@ -985,6 +1121,7 @@ function GameAction:processMessage(message, mysql)
                                             })
 end
 
+
 function GameAction:onDisconnect(event)
     local mysql   = event.mysql
     if not mysql then
@@ -992,7 +1129,7 @@ function GameAction:onDisconnect(event)
     end
 
     -- unregister all games user has registered
-    local message = msgid .. " UNREGISTER -1 " .. "\n";
+    local message = " UNREGISTER -1 " .. "\n";
     cc.printdebug("sending message to allin server: %s", message)
     local instance = self:getInstance()
     local allin = instance:getAllin()

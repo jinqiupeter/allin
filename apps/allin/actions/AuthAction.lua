@@ -168,6 +168,8 @@ function AuthAction:signinAction(args)
         result.data.msg = "密码未设置"
         return result
     end
+    local instance = self:getInstance()
+    local mysql = instance:getMysql()
     local sql = "select * from user where phone = \'".. phone .. "\' and password=\'"  .. password .. "\';"
     local dbres, err, errno, sqlstate = mysql:query(sql)
     if not dbres then
@@ -183,6 +185,7 @@ function AuthAction:signinAction(args)
     result.data.user_id = dbres[1].id
 
     -- generate a new session id on every login. we dont care about expiry, only use the sid string
+    local instance = self:getInstance()
     local redis = instance:getRedis()
     local session = Session:new(redis)
     session:start()
