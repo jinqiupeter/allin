@@ -1123,11 +1123,6 @@ end
 
 
 function GameAction:onDisconnect(event)
-    local mysql   = event.mysql
-    if not mysql then
-        cc.printdebug("mysql not found in event")
-    end
-
     -- unregister all games user has registered
     local message = " UNREGISTER -1 " .. "\n";
     cc.printdebug("sending message to allin server: %s", message)
@@ -1136,10 +1131,8 @@ function GameAction:onDisconnect(event)
 
     local bytes, err = allin:sendMessage(message)
     if not bytes then
-        result.data.state = Constants.Error.AllinError
-        result.data.msg = err
+        local err = Constants.Error.AllinError
         cc.printwarn("failed to send message: %s", err)
-        return result
     end 
 end
 
