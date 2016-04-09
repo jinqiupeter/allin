@@ -28,7 +28,6 @@ local config = {
     -- all apps
     apps = {
         allin = "/opt/gbc-core/apps/allin",
-        welcome = "/opt/gbc-core/apps/welcome"
     },
 
     -- default app config
